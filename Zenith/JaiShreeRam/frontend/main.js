@@ -600,6 +600,26 @@ ipcMain.handle('get-directory-files', async (event, dirPath) => {
   }
 });
 
+ipcMain.handle('agent-edit', async (event, data) => {
+  try {
+    const response = await fetch('http://127.0.0.1:5000/api/agent/edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Backend error: ${response.status} - ${errorText}` };
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error in agent-edit:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
 

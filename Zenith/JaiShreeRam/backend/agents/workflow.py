@@ -360,3 +360,237 @@ class CodeWorkflow:
                 "final_code": "",
                 "final_output": "",
             }
+
+
+class EditState(TypedDict):
+    """State for Multi-File Edit Workflow"""
+    messages: Annotated[List[Any], add_messages]
+    task: str
+    files: List[str]  # List of relevant files
+    plan: str
+    edits: List[Dict[str, str]] # List of {file_path, new_content, original_content, diff}
+    analysis: str
+
+class MultiFileEditWorkflow:
+    """Orchestrates multi-file edits with AST analysis and planning"""
+
+    def __init__(self, llm_service):
+        self.llm_service = llm_service
+        self.workflow = self._create_workflow()
+
+    def _create_workflow(self):
+        workflow = StateGraph(EditState)
+
+        workflow.add_node("analyze_context", self._analyze_context)
+        workflow.add_node("plan_changes", self._plan_changes)
+        workflow.add_node("generate_content", self._generate_content)
+
+        workflow.set_entry_point("analyze_context")
+        workflow.add_edge("analyze_context", "plan_changes")
+        workflow.add_edge("plan_changes", "generate_content")
+        workflow.add_edge("generate_content", END)
+
+        return workflow.compile()
+
+    def _analyze_context(self, state: EditState) -> EditState:
+        """Analyze files using AST/Regex to understand context"""
+        logger.info("Analyzing context for multi-file edit")
+        
+        analysis_results = []
+        import ast
+        import os
+        
+        for file_path in state.get("files", []):
+            if not os.path.exists(file_path):
+                continue
+                
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                
+                analysis_results.append(f"--- File: {os.path.basename(file_path)} ---")
+                
+                if file_path.endswith(".py"):
+                    try:
+                        tree = ast.parse(content)
+                        classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+                        functions = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+                        analysis_results.append(f"Structure: Classes={classes}, Functions={functions}")
+                    except SyntaxError:
+                        analysis_results.append("Structure: (Syntax Error)")
+                else:
+                    analysis_results.append("Structure: (Non-Python file)")
+                    
+            except Exception as e:
+                logger.error(f"Error analyzing file {file_path}: {e}")
+        
+        state["analysis"] = "\n".join(analysis_results)
+        return state
+
+    def _plan_changes(self, state: EditState) -> EditState:
+        """Plan which files to edit and how"""
+        logger.info("Planning changes")
+        
+        prompt = f"""
+        Plan the following coding task across multiple files.
+        You can MODIFY existing files or CREATE NEW files if needed.
+        
+        Task: {state['task']}
+        Analysis of provided files:
+        {state['analysis']}
+        
+        Files currently available: {state['files']}
+        
+        Provide a plan that:
+        1. Identifies which files need modification.
+        2. Identifies any NEW files to be created.
+        3. Describes the specific changes/content for each file.
+        4. Ensures consistency across files.
+        """
+        
+        messages = [
+            SystemMessage(content="You are a senior software architect planning a multi-file refactor."),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = self.llm_service.creative_llm.invoke(messages)
+        state["messages"].append(response)
+        state["plan"] = response.content
+        return state
+
+    def _generate_content(self, state: EditState) -> EditState:
+        """Generate the new content for each file"""
+        logger.info("Generating content")
+        
+        plan = state["plan"]
+        edits = []
+        
+        # Ask LLM for a structured list of files to edit/create based on the plan
+        # For simplicity in this iteration, we still iterate over input files for modifications
+        # BUT we should also ask the LLM "What NEW files should be created?" or "List ALL files to be touched"
+        # To keep it robust without complex parsing, we'll ask the LLM to generate a JSON list of files first
+        
+        candidates_prompt = f"""
+        Based on this plan, list ALL files that need to be created or modified. 
+        Return a JSON list of file paths.
+        
+        Plan:
+        {plan}
+        
+        Existing files: {state['files']}
+        """
+        
+        candidates_msg = [
+             SystemMessage(content="You are a helper. Return strictly a JSON list of strings, e.g. [\"app.py\", \"utils.py\"]"),
+             HumanMessage(content=candidates_prompt)
+        ]
+        
+        try:
+             import json
+             import re
+             resp = self.llm_service.precise_llm.invoke(candidates_msg)
+             content = resp.content
+             match = re.search(r"\[.*\]", content, re.DOTALL)
+             if match:
+                 target_files = json.loads(match.group(0))
+             else:
+                 target_files = state['files'] # Fallback
+        except Exception as e:
+             logger.error(f"Failed to parse target files: {e}")
+             target_files = state['files']
+
+        import os
+        
+        for file_path in target_files:
+             # Check if file exists to decide prompt nuance
+             file_exists = os.path.exists(file_path)
+             original_content = ""
+             
+             if file_exists:
+                 with open(file_path, "r", encoding="utf-8") as f:
+                     original_content = f.read()
+                 prompt_type = "MODIFY"
+             else:
+                 prompt_type = "CREATE NEW"
+             
+             prompt = f"""
+             Based on the plan, generate the FULL CONTENT for this file ({prompt_type}).
+             
+             Plan:
+             {plan}
+             
+             File: {file_path}
+             Original Content:
+             """
+             
+             if file_exists:
+                  prompt += f"\n```\n{original_content}\n```"
+             else:
+                  prompt += "\n(New File)"
+             
+             messages = [
+                SystemMessage(content="You are an expert coder. Output ONLY the code for the file. No markdown fences if possible, or standard fences."),
+                HumanMessage(content=prompt)
+             ]
+             
+             response = self.llm_service.precise_llm.invoke(messages)
+             new_content = response.content
+             
+             if new_content.startswith("```"):
+                 match = re.search(r"```(?:\w+)?\n(.*?)\n```", new_content, re.DOTALL)
+                 if match:
+                     new_content = match.group(1)
+            
+             if not file_exists or new_content.strip() != original_content.strip():
+                import difflib
+                diff = "".join(difflib.unified_diff(
+                    original_content.splitlines(keepends=True),
+                    new_content.splitlines(keepends=True),
+                    fromfile=os.path.basename(file_path),
+                    tofile=os.path.basename(file_path)
+                ))
+                
+                edits.append({
+                    "file_path": file_path,
+                    "new_content": new_content,
+                    "original_content": original_content,
+                    "diff": diff,
+                    "is_new": not file_exists
+                })
+        
+        state["edits"] = edits
+        return state
+
+    def run(self, task: str, files: List[str]) -> Dict[str, Any]:
+        """Run the multi-file edit workflow"""
+        try:
+            logger.info(f"Starting multi-file edit for: {task[:50]}...")
+            
+            initial_state = EditState(
+                messages=[],
+                task=task,
+                files=files,
+                plan="",
+                edits=[],
+                analysis=""
+            )
+            
+            final_state = self.workflow.invoke(initial_state)
+            
+            return {
+                "success": True,
+                "analysis": final_state.get("analysis", ""),
+                "plan": final_state.get("plan", ""),
+                "edits": final_state.get("edits", []),
+                "summary": f"Generated {len(final_state.get('edits', []))} edits"
+            }
+            
+        except Exception as e:
+            logger.error(f"Multi-file workflow error: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": str(e),
+                "edits": []
+            }

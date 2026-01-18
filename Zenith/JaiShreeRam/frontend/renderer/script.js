@@ -42,7 +42,7 @@ class CodeEditor {
 
             try {
                 this.editor = monaco.editor.create(document.getElementById('editor'), {
-                    value: `// Welcome to AI Code Editor!\n// Try asking the AI to generate some code.\n\nfunction greet(name) {\n    return \`Hello, \${name}!\`;\n}\n\nconsole.log(greet("Developer"));`,
+                    value: '',
                     language: 'javascript',
                     theme: 'vs-dark',
                     automaticLayout: true,
@@ -513,70 +513,14 @@ class CodeEditor {
 
     setupDefaultWorkspace() {
         console.log('Setting up default workspace...');
-
-        // Create a simple file tree for demo
         this.fileTree = {
-            name: 'Welcome',
-            path: '/welcome',
+            name: 'Workspace',
+            path: '/',
             type: 'folder',
             open: true,
-            children: [
-                {
-                    name: 'welcome.js',
-                    path: '/welcome/welcome.js',
-                    type: 'file',
-                    content: `// Welcome to AI Code Editor
-// This is a sample JavaScript file
-
-function fibonacci(n) {
-    if (n <= 1) return n;
-    return fibonacci(n - 1) + fibonacci(n - 2);
-}
-
-function factorial(n) {
-    if (n === 0) return 1;
-    return n * factorial(n - 1);
-}
-
-// Example usage
-console.log('Fibonacci of 10:', fibonacci(10));
-console.log('Factorial of 5:', factorial(5));`
-                },
-                {
-                    name: 'README.md',
-                    path: '/welcome/README.md',
-                    type: 'file',
-                    content: `# AI Code Editor
-
-A powerful code editor with AI assistance.
-
-## Features
-
-- Code editing with syntax highlighting
-- AI-powered code generation and assistance
-- File management
-- Terminal integration
-- VS Code-like interface
-
-## Getting Started
-
-1. Open a folder using File → Open Folder
-2. Create new files with the + button
-3. Use AI assistant for code help
-4. Run code with F5`
-                }
-            ]
+            children: []
         };
-
         this.renderFileTree();
-
-        // Open first file
-        if (this.fileTree.children && this.fileTree.children.length > 0) {
-            const firstFile = this.fileTree.children.find(child => child.type === 'file');
-            if (firstFile) {
-                this.openFile(firstFile.path, firstFile.content, firstFile.name);
-            }
-        }
     }
 
     renderFileTree(node = this.fileTree, parentElement = document.getElementById('workspace'), depth = 0) {
@@ -932,43 +876,92 @@ A powerful code editor with AI assistance.
         });
 
         if (this.tabs.has(filePath)) {
-            const tab = this.tabs.get(filePath).element;
+            const tabInfo = this.tabs.get(filePath);
+            const tab = tabInfo.element;
             tab.classList.add('active');
             tab.classList.add('neon-glow');
             this.activeTab = filePath;
             this.currentFile = filePath;
 
-            // Load file content into editor
-            const tabInfo = this.tabs.get(filePath);
-            const fileName = tabInfo.fileName;
-
-            // Update editor content from stored content
-            if (this.editor) {
-                // Always load from stored content (openFile always stores content now)
-                const contentToSet = tabInfo.content !== undefined ? tabInfo.content : '';
-                this.editor.setValue(contentToSet);
-                console.log(`Loaded content for tab: ${filePath}, length: ${contentToSet.length}`);
-
-                // Update language
-                const language = this.getLanguageFromExtension(fileName);
-                const model = this.editor.getModel();
-                if (model) {
-                    monaco.editor.setModelLanguage(model, language);
+            // Handle Diff Tabs
+            if (tabInfo.isDiff && tabInfo.editData) {
+                console.log('Activating Diff Tab for:', filePath);
+                // Ensure Diff container exists
+                let diffContainer = document.getElementById('diff-editor-container-tab');
+                if (!diffContainer) {
+                    diffContainer = document.createElement('div');
+                    diffContainer.id = 'diff-editor-container-tab';
+                    diffContainer.style.position = 'absolute';
+                    diffContainer.style.top = '0';
+                    diffContainer.style.left = '0';
+                    diffContainer.style.width = '100%';
+                    diffContainer.style.height = '100%';
+                    diffContainer.style.zIndex = '9999'; // Very high z-index
+                    diffContainer.style.backgroundColor = '#1e1e1e'; // Opaque background
+                    document.getElementById('editor').appendChild(diffContainer);
+                    
+                    this.diffEditorInstance = monaco.editor.createDiffEditor(diffContainer, {
+                        theme: 'vs-dark',
+                        automaticLayout: true,
+                        readOnly: true,
+                        originalEditable: false
+                    });
                 }
+                diffContainer.style.display = 'block';
+                
+                const edit = tabInfo.editData;
+                const originalModel = monaco.editor.createModel(edit.original_content, this.getLanguageFromExtension(edit.file_path));
+                const modifiedModel = monaco.editor.createModel(edit.new_content, this.getLanguageFromExtension(edit.file_path));
+                
+                this.diffEditorInstance.setModel({
+                    original: originalModel,
+                    modified: modifiedModel
+                });
+                
+                // Force layout update
+                setTimeout(() => {
+                    this.diffEditorInstance.layout();
+                }, 50);
+
+                this.renderDiffActions(diffContainer, tabInfo.editData, filePath);
+                
+            } else {
+                // Standard Editor Tab
+                // Hide diff container if exists
+                const diffContainer = document.getElementById('diff-editor-container-tab');
+                if (diffContainer) {
+                    diffContainer.style.display = 'none';
+                }
+
+                // Update editor content from stored content
+                if (this.editor) {
+                    const contentToSet = tabInfo.content !== undefined ? tabInfo.content : '';
+                    this.editor.setValue(contentToSet);
+                    console.log(`Loaded content for tab: ${filePath}, length: ${contentToSet.length}`);
+
+                    // Update language
+                    const fileName = tabInfo.fileName;
+                    const language = this.getLanguageFromExtension(fileName);
+                    const model = this.editor.getModel();
+                    if (model) {
+                         monaco.editor.setModelLanguage(model, language);
+                    }
+                }
+                
+                // Update UI elements for standard tabs
+                const fileName = tabInfo.fileName;
+                document.getElementById('file-path').textContent = this.getFileNameFromPath(filePath) || fileName;
+                document.getElementById('file-path').title = filePath;
+
+                const languageStatus = document.getElementById('language-status');
+                if (languageStatus) {
+                    const language = this.getLanguageFromExtension(fileName);
+                    languageStatus.querySelector('span').textContent =
+                        language.charAt(0).toUpperCase() + language.slice(1);
+                }
+
+                this.updateOutline();
             }
-
-            // Update UI
-            document.getElementById('file-path').textContent = this.getFileNameFromPath(filePath) || fileName;
-            document.getElementById('file-path').title = filePath;
-
-            const languageStatus = document.getElementById('language-status');
-            if (languageStatus) {
-                const language = this.getLanguageFromExtension(fileName);
-                languageStatus.querySelector('span').textContent =
-                    language.charAt(0).toUpperCase() + language.slice(1);
-            }
-
-            this.updateOutline();
         }
 
         // Update active file in sidebar
@@ -980,6 +973,121 @@ A powerful code editor with AI assistance.
         });
 
         console.log(`Active tab set: ${filePath}`);
+    }
+
+    renderDiffActions(container, edit, filePath) {
+        let toolbar = document.getElementById('diff-actions-toolbar');
+        if (!toolbar) {
+            toolbar = document.createElement('div');
+            toolbar.id = 'diff-actions-toolbar';
+            toolbar.style.cssText = `
+                position: absolute;
+                top: 10px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                gap: 10px;
+                background: rgba(30, 30, 30, 0.8);
+                backdrop-filter: blur(4px);
+                padding: 5px;
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            `;
+            container.appendChild(toolbar);
+        }
+        
+        toolbar.innerHTML = '';
+        
+        const acceptBtn = document.createElement('button');
+        acceptBtn.className = 'btn-success';
+        acceptBtn.innerHTML = '<i class="fas fa-check"></i> Accept';
+        acceptBtn.style.padding = '5px 10px';
+        acceptBtn.style.fontSize = '12px';
+        acceptBtn.style.cursor = 'pointer';
+        acceptBtn.onclick = () => this.applySingleEdit(edit);
+        
+        const rejectBtn = document.createElement('button');
+        rejectBtn.className = 'btn-secondary'; 
+        rejectBtn.innerHTML = '<i class="fas fa-times"></i> Reject';
+        rejectBtn.style.padding = '5px 10px';
+        rejectBtn.style.fontSize = '12px';
+        rejectBtn.style.backgroundColor = '#d9534f';
+        rejectBtn.style.cursor = 'pointer';
+        rejectBtn.onclick = () => this.rejectSingleEdit(edit);
+        
+        toolbar.appendChild(acceptBtn);
+        toolbar.appendChild(rejectBtn);
+    }
+
+    async applySingleEdit(edit) {
+        try {
+            // Determine effective file path
+            let targetPath = edit.file_path;
+            
+            // If it's a new file, we MUST create it to get the absolute system path
+            const isNew = edit.is_new;
+            if (isNew) {
+                // If it's just a filename like 'stream.js', ensure we map it to workspace
+                const fileName = this.getFileNameFromPath(edit.file_path);
+                
+                targetPath = await window.electronAPI.createFile({
+                     folderPath: this.workspacePath, 
+                     fileName: fileName
+                });
+                
+                console.log(`Created new file at: ${targetPath}`);
+            } // If existing file, we assume edit.file_path is already absolute or correct relative
+            
+            await window.electronAPI.saveFile({
+                filePath: targetPath,
+                content: edit.new_content
+            });
+            
+            // Reset Tab State
+            // Note: We use edit.file_path for map keys as that's what the tab system uses
+            if (this.tabs.has(edit.file_path)) {
+                const tabInfo = this.tabs.get(edit.file_path);
+                tabInfo.isDiff = false;
+                tabInfo.editData = null;
+                tabInfo.content = edit.new_content; 
+                
+                // Update tab to point to the real path if it changed (e.g. from relative to absolute)
+                if (targetPath !== edit.file_path) {
+                    // Update the map key... this is tricky. 
+                    // Better to just keep using the key we Have, or re-open properly.
+                    // For now, let's just reload.
+                }
+
+                // Reload to show standard editor
+                this.setActiveTab(edit.file_path);
+            }
+            this.showNotification(`Changes applied to ${this.getFileNameFromPath(targetPath)}`, 'success');
+            
+            // Refresh file tree to show new files
+            this.refreshFileTree();
+            
+        } catch (error) {
+            this.showNotification(`Error applying edit: ${error.message}`, 'error');
+        }
+    }
+
+    rejectSingleEdit(edit) {
+        const filePath = edit.file_path;
+        if (this.tabs.has(filePath)) {
+            const tabInfo = this.tabs.get(filePath);
+            
+            if (edit.is_new) {
+                // If it was a new file, just close the tab
+                this.closeTab(filePath);
+            } else {
+                // If existing file, revert to normal view
+                tabInfo.isDiff = false;
+                tabInfo.editData = null;
+                tabInfo.content = edit.original_content;
+                this.setActiveTab(filePath);
+            }
+            this.showNotification('Edit rejected', 'info');
+        }
     }
 
     closeTab(filePath) {
@@ -1001,7 +1109,14 @@ A powerful code editor with AI assistance.
                 if (remainingTabs.length > 0) {
                     this.setActiveTab(remainingTabs[0]);
                 } else {
-                    this.createNewFile();
+                    // No tabs left - Clear editor
+                    this.currentFile = null;
+                    this.activeTab = null;
+                    if (this.editor) {
+                        this.editor.setValue('');
+                        document.getElementById('file-path').textContent = '';
+                        document.getElementById('language-status').querySelector('span').textContent = 'Plain Text';
+                    }
                 }
             }
         }
@@ -1019,7 +1134,16 @@ A powerful code editor with AI assistance.
         if (tabsContainer) {
             tabsContainer.innerHTML = '';
         }
-        this.createNewFile();
+        
+        // Reset Editor State
+        this.currentFile = null;
+        this.activeTab = null;
+        if (this.editor) {
+            this.editor.setValue('');
+            document.getElementById('file-path').textContent = '';
+            const langStatus = document.getElementById('language-status'); 
+            if(langStatus) langStatus.querySelector('span').textContent = 'Plain Text';
+        }
     }
 
     createNewFile() {
@@ -1252,6 +1376,10 @@ A powerful code editor with AI assistance.
         console.log('Opening folder:', folderPath);
 
         this.workspacePath = folderPath;
+
+        // Reset Workspace State
+        this.closeAllTabs();
+        this.clearAIChat();
 
     // Reset Chat and RAG
     const chatMessages = document.getElementById('ai-chat-messages');
@@ -1625,11 +1753,201 @@ A powerful code editor with AI assistance.
                         this.showNotification(`Document Error: ${result.error}`, 'error');
                     }
                     break;
+                    break;
+                case 'edit':
+                    // Multi-file edit requested
+                    // The backend should return a plan or list of edits
+                    // We'll treat this differently - maybe call a different endpoint or handle 'task' param
+                    
+                    // For now, let's assume specific endpoint usage if action is 'edit'
+                    // Implementation below
+                    break;
             }
 
         } catch (error) {
             console.error('AI action error:', error);
             this.showNotification(`AI Error: ${error.message}`, 'error');
+        }
+    }
+
+    async handleMultiFileEdit(task) {
+        console.log("HandleMultiFileEdit: Starting Native Diff Workflow");
+        
+        // create a placeholder message for progress updates
+        const progressId = 'progress-' + Date.now();
+        this.addAIMessage('ai', '<span id="' + progressId + '">Analyzing request...</span>');
+        
+        // Start progress simulation
+        const stopProgress = this.simulateProgress(progressId);
+        
+        try {
+            const files = Array.from(this.tabs.keys());
+            
+            const result = await window.electronAPI.invoke('agent-edit', {
+                task: task,
+                files: files
+            });
+
+            // Stop progress simulation
+            stopProgress();
+
+            if (result.success) {
+                // Remove the progress message or update it to the result
+                const progressElement = document.getElementById(progressId);
+                if (progressElement) {
+                     // Find the parent message div and remove it to avoid clutter, 
+                     // OR update it. Let's remove it and add the real response.
+                     const messageDiv = progressElement.closest('.message');
+                     if (messageDiv) messageDiv.remove();
+                }
+
+                // If there are edits, show the full UI
+                // If there are edits, show the full UI
+                if (result.edits && result.edits.length > 0) {
+                    this.addAIMessage('ai', `**Plan Created:**\n\n${result.plan}\n\nI have proposed edits for ${result.edits.length} files. Opening files for review...`);
+                    
+                    // Auto-open diffs in native tabs
+                    this.currentEdits = result.edits;
+                    for (const edit of result.edits) {
+                        await this.openEditAsDiff(edit);
+                    }
+                    
+                    // Add "Apply" action to chat
+                    this.addChatAction('Apply All Changes', () => this.applyAllEdits(result.edits));
+                } else {
+                    // No edits, treat as a normal chat response (using the plan as the response)
+                    // The backend typically returns the LLM response in 'plan' if no edits were found
+                    this.addAIMessage('ai', result.plan || "I processed your request but found no changes needed.");
+                }
+                
+            } else {
+                const progressElement = document.getElementById(progressId);
+                if (progressElement) {
+                     const messageDiv = progressElement.closest('.message');
+                     if (messageDiv) messageDiv.remove();
+                }
+                this.addAIMessage('ai', `**Error:** Failed to generate response: ${result.error}`);
+            }
+        } catch (error) {
+             stopProgress();
+             const progressElement = document.getElementById(progressId);
+             if (progressElement) {
+                  const messageDiv = progressElement.closest('.message');
+                  if (messageDiv) messageDiv.remove();
+             }
+             this.showNotification(`Error: ${error.message}`, 'error');
+             this.addAIMessage('ai', `**System Error:** ${error.message}`);
+        }
+    }
+
+    simulateProgress(elementId) {
+        const phases = [
+            "Analyzing context...", 
+            "Reading files...", 
+            "Planning changes...", 
+            "Designing solution...",
+            "Generating code...",
+            "Reviewing changes...",
+            "Finalizing..."
+        ];
+        
+        let phaseIndex = 0;
+        const element = document.getElementById(elementId);
+        
+        const interval = setInterval(() => {
+            const el = document.getElementById(elementId);
+            if (el) {
+                phaseIndex = (phaseIndex + 1) % phases.length;
+                el.textContent = phases[phaseIndex];
+                // Optional: Scroll to bottom if needed
+                const messages = document.getElementById('ai-chat-messages');
+                if (messages) messages.scrollTop = messages.scrollHeight;
+            }
+        }, 2000); // Update every 2 seconds
+        
+        return () => clearInterval(interval);
+    }
+
+    async openEditAsDiff(edit) {
+        const filePath = edit.file_path;
+        
+        // ensure file is open (creates tab if needed)
+        if (edit.is_new) {
+             const fileName = this.getFileNameFromPath(filePath);
+             if (!this.tabs.has(filePath)) {
+                 this.createTab(filePath, fileName);
+             }
+        } else {
+             // Open existing file
+             try {
+                // We use openFile to ensure tab exists and content loaded
+                await this.openFile(filePath, null, this.getFileNameFromPath(filePath)); 
+             } catch(e) {
+                 console.warn("Could not open file from disk (maybe new?):", e);
+             }
+        }
+        
+        // hijacked tab for diff view
+        if (this.tabs.has(filePath)) {
+            const tabInfo = this.tabs.get(filePath);
+            tabInfo.isDiff = true;
+            tabInfo.editData = edit;
+            
+            // Force refresh to show diff
+            this.setActiveTab(filePath);
+        }
+    }
+    
+    // Override/Extend setTabContent to handle diff editors?
+    // Current architecture creates one editor `this.editor`.
+    // We need to support swapping the editor instance or model.
+    // simpler approach: When active tab is a Diff tab, dispose default editor (or hide) and show diff editor.
+    
+    // NOTE: For this step, I'll modify setActiveTab in a subsequent edit or assume I can inject logic here. 
+    // Actually, `setActiveTab` logic is complex. Let's try to hook into the existing system by:
+    // 1. Modifying `setActiveTab` to check for `isDiff` flag.
+    // 2. If diff, render DiffEditor.
+    
+    async applyAllEdits(edits) {
+        this.showNotification('Applying all changes...', 'info');
+        try {
+            for (const edit of edits) {
+                // Save to disk
+                const isNew = edit.is_new;
+                
+                if (isNew) {
+                    await window.electronAPI.createFile({
+                         folderPath: this.workspacePath, 
+                         fileName: this.getFileNameFromPath(edit.file_path)
+                    });
+                }
+                
+                await window.electronAPI.saveFile({
+                    filePath: edit.file_path,
+                    content: edit.new_content
+                });
+                
+                // Reset Tab State
+                if (this.tabs.has(edit.file_path)) {
+                    const tabInfo = this.tabs.get(edit.file_path);
+                    tabInfo.isDiff = false;
+                    tabInfo.editData = null;
+                    tabInfo.content = edit.new_content; // Update stored content
+                    
+                    // If this is the active tab, reload to show standard editor
+                    if (this.activeTab === edit.file_path) {
+                        this.setActiveTab(edit.file_path);
+                    }
+                }
+            }
+            this.showNotification('Changes applied!', 'success');
+            this.refreshFileTree();
+            
+            // Reload current tab just in case
+            if (this.activeTab) this.setActiveTab(this.activeTab);
+            
+        } catch (error) {
+            this.showNotification(`Error: ${error.message}`, 'error');
         }
     }
 
@@ -1645,6 +1963,11 @@ A powerful code editor with AI assistance.
         if (!message) {
             this.showNotification('Please enter a message', 'warning');
             return;
+        }
+        
+        // Detect if this is an explicit edit command
+        if (message.toLowerCase().startsWith('/edit') || message.toLowerCase().includes('change current file')) {
+             // For now, hook into chat, but ideally we parse intent
         }
 
         this.addAIMessage('user', message);
@@ -1686,21 +2009,13 @@ A powerful code editor with AI assistance.
                 current_file: this.currentFile || 'Untitled',
                 use_rag: useRag
             };
-
-            if (useRag && !this.workspacePath) {
-                 this.showNotification('Please open a folder to use Codebase Search', 'warning');
-            }
-
-            const result = await window.electronAPI.chatWithAI(message, history, context);
-
+            
+            // ALWAYS use the Multi-File Edit/Agent Workflow
             this.hideAITypingIndicator();
+            await this.handleMultiFileEdit(message);
+            return;
 
-            if (result.success) {
-                this.addAIMessage('ai', result.response);
-                this.aiChatHistory = result.history || [];
-            } else {
-                this.addAIMessage('ai', `**Error:** ${result.error}\n\n${result.response || 'Please check backend connection.'}`);
-            }
+
 
         } catch (error) {
             this.hideAITypingIndicator();
@@ -1802,6 +2117,40 @@ A powerful code editor with AI assistance.
         } else if (sender === 'ai') {
             this.aiChatHistory.push({ role: 'assistant', content: content });
         }
+    }
+
+    addChatAction(label, callback) {
+        const messages = document.getElementById('ai-chat-messages');
+        if (!messages) return;
+
+        const actionDiv = document.createElement('div');
+        actionDiv.className = 'chat-action fade-in';
+        actionDiv.style.textAlign = 'center';
+        actionDiv.style.margin = '10px 0';
+        actionDiv.style.display = 'flex';
+        actionDiv.style.justifyContent = 'center';
+
+        const button = document.createElement('button');
+        button.className = 'btn-primary';
+        button.innerHTML = `<i class="fas fa-magic"></i> ${label}`;
+        button.style.fontSize = '12px';
+        button.style.padding = '8px 20px';
+        button.style.borderRadius = '20px';
+        button.style.border = 'none';
+        button.style.boxShadow = '0 4px 15px rgba(0, 255, 255, 0.2)';
+        button.style.transition = 'all 0.3s ease';
+        
+        button.onclick = async () => {
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying...';
+            await callback();
+            button.innerHTML = '<i class="fas fa-check"></i> Done';
+            button.style.backgroundColor = '#4caf50'; // Green
+        };
+
+        actionDiv.appendChild(button);
+        messages.appendChild(actionDiv);
+        messages.scrollTop = messages.scrollHeight;
     }
 
     formatAIContent(content) {

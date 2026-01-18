@@ -38,6 +38,9 @@ llm_service = GeminiService() # OllamaService()
 file_service = FileService()
 from services.rag_service import RAGService
 rag_service = RAGService()
+
+from agents.workflow import MultiFileEditWorkflow
+multi_file_workflow = MultiFileEditWorkflow(llm_service)
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({"error": "Not found", "message": str(error)}), 404
@@ -62,7 +65,7 @@ def internal_error(error):
 def log_request_info():
     logger.info(f"Request: {request.method} {request.path}")
     if request.is_json:
-        logger.debug(f"Request body: {request.get_json()}")
+        logger.debug(f"Request body: {request.get_json(silent=True)}")
 
 
 @app.after_request
@@ -504,6 +507,26 @@ def reset_rag_index():
 #             ),
 #             500,
 #         )
+
+
+@app.route("/api/agent/edit", methods=["POST"])
+def agent_edit():
+    try:
+        data = request.get_json()
+        task = data.get("task")
+        files = data.get("files", [])
+        
+        if not task:
+            return jsonify({"error": "Missing task field"}), 400
+            
+        logger.info(f"Starting multi-file edit for task: {task}")
+        result = multi_file_workflow.run(task, files)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in agent_edit: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":

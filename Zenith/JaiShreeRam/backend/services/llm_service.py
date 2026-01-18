@@ -36,8 +36,16 @@ class GeminiService:
             self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=self.api_key, temperature=0.7)
             self.model = "gemini-2.5-flash"
             logger.info(f"Gemini Service initialized with model: {self.model}")
+            
+            # Initialize specialized LLMs
+            self.creative_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=self.api_key, temperature=0.9)
+            self.precise_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=self.api_key, temperature=0.1)
+            self.analytical_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=self.api_key, temperature=0.3)
         else:
             self.llm = None
+            self.creative_llm = None
+            self.precise_llm = None
+            self.analytical_llm = None
             self.model = "gemini-2.5-flash (unconfigured)"
 
     def _ensure_configured(self):

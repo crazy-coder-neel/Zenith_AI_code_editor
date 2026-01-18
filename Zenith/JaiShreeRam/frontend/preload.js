@@ -1,9 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'http://127.0.0.1:5000/api';
 
 contextBridge.exposeInMainWorld('electronAPI', {
     windowControl: (action) => ipcRenderer.invoke('window-control', action),
+    invoke: (channel, data) => ipcRenderer.invoke(channel, data),
     
     saveFile: (data) => ipcRenderer.invoke('save-file', data),
     createFile: (data) => ipcRenderer.invoke('create-file', data),
